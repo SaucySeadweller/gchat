@@ -45,8 +45,6 @@ func (e *ExecutorScope) executor(t string) {
 	switch t {
 	case "register":
 		err = reg(e.authClient)
-	case "message":
-		e.sendMessage()
 	case "notifications":
 		e.messageNotifications()
 	case "send friend request":
@@ -115,18 +113,6 @@ func (e *ExecutorScope) login(username string, pass string) error {
 	return nil
 }
 
-func (e *ExecutorScope) sendMessage() {
-	_, err := e.chatClient.SendMessage(e.ctx, &api.Message{
-		To:   prompt.Input("Who do you want to message?", Empty),
-		Data: prompt.Input("What is your message?", Empty),
-	})
-
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-}
 func (e *ExecutorScope) messageNotifications() {
 	stream, err := e.chatClient.Messages(e.ctx, &api.Empty{})
 	if err != nil {
@@ -203,6 +189,7 @@ func (e *ExecutorScope) ui() {
 	list := tview.NewList()
 	list.AddItem("register", "register to use the program", 'r', func() { e.registerScreen(list) })
 	list.AddItem("login", "login as a user", 'l', func() { e.loginScreen(list) })
+	list.AddItem("send message", "send a message to a user", 'm', func() { e.messageScreen(list) })
 	list.AddItem("quit", "quit the program", 'q', func() { e.app.Stop() })
 
 	if err := e.app.SetRoot(list, true).SetFocus(list).Run(); err != nil {
@@ -264,25 +251,25 @@ func (e *ExecutorScope) loginScreen(elementToFocus tview.Primitive) {
 	e.app.SetRoot(form, true).SetFocus(form).Draw()
 }
 
-//func (e *ExecutorScope) messageScreen(elementToFocus tview.Primitive) {
-//	form := tview.NewForm()
-//	message := ""
-//	username := ""
-//	form.AddInputField("Username", "", 10, tview.InputFieldMaxLength(100), func(text string) {
-//
-//	})
-//
-//	form.AddButton("send message", func() {
-//		_, err := e.messageScreen(elementToFocus)
-//		if err != nil {
-//			e.errorModal(elementToFocus)
-//		}
-//		e.app.SetRoot(elementToFocus, true).SetFocus(elementToFocus).Draw()
-//	})
-//	form.AddInputField("Message", "", 10, tview.InputFieldMaxLength(100), func(text string) {
-//
-//	})
-//}
+func (e *ExecutorScope) messageScreen(elementToFocus tview.Primitive) {
+	req := api.Message{}
+	form := tview.NewForm()
+	form.AddInputField("Username", "", 10, tview.InputFieldMaxLength(100), func(text string) {
+		req.To = text
+	})
+	form.AddInputField("Message", "", 10, tview.InputFieldMaxLength(100), func(text string) {
+		req.Data = text
+
+	})
+	form.AddButton("send message", func() {
+		_, err := e.chatClient.SendMessage(e.ctx, &req)
+		if err != nil {
+			e.modal(form, err.Error())
+		}
+		e.app.SetRoot(elementToFocus, true).SetFocus(elementToFocus).Draw()
+	})
+	e.app.SetRoot(form, true).SetFocus(form).Draw()
+}
 func (e *ExecutorScope) modal(elementToFocus tview.Primitive, s string) {
 	m := tview.NewModal()
 	m.AddButtons([]string{"Ok"}).SetText(s)
