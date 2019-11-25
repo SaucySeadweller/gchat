@@ -37,6 +37,8 @@ type ExecutorScope struct {
 	friendClient api.FriendsClient
 	friendList   map[string]*api.Friend
 	app          *tview.Application
+	list         *tview.List
+	flexx        *tview.Flex
 }
 
 func (e *ExecutorScope) executor(t string) {
@@ -45,8 +47,6 @@ func (e *ExecutorScope) executor(t string) {
 	switch t {
 	case "register":
 		err = reg(e.authClient)
-	case "notifications":
-		e.messageNotifications()
 	case "send friend request":
 		e.sendFriendRequest()
 	case "friends list":
@@ -113,23 +113,6 @@ func (e *ExecutorScope) login(username string, pass string) error {
 	return nil
 }
 
-func (e *ExecutorScope) messageNotifications() {
-	stream, err := e.chatClient.Messages(e.ctx, &api.Empty{})
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	go func() {
-		msg, err := stream.Recv()
-		for err == nil {
-			if err == nil {
-				fmt.Println(msg.From, msg.Data)
-			}
-			msg, err = stream.Recv()
-		}
-	}()
-}
-
 func (e *ExecutorScope) sendFriendRequest() {
 	_, err := e.friendClient.Add(e.ctx, &api.Friend{
 		Username: prompt.Input("Who do you want to send a friend request to?", Empty),
@@ -187,12 +170,14 @@ func (e *ExecutorScope) status() {
 func (e *ExecutorScope) ui() {
 	e.app = tview.NewApplication()
 	list := tview.NewList()
-	list.AddItem("register", "register to use the program", 'r', func() { e.registerScreen(list) })
-	list.AddItem("login", "login as a user", 'l', func() { e.loginScreen(list) })
-	list.AddItem("send message", "send a message to a user", 'm', func() { e.messageScreen(list) })
+	e.list = list
+	list.AddItem("register", "register to use the program", 'r', func() { e.registerScreen(e.flexx) })
+	list.AddItem("login", "login as a user", 'l', func() { e.loginScreen(e.flexx) })
 	list.AddItem("quit", "quit the program", 'q', func() { e.app.Stop() })
-
-	if err := e.app.SetRoot(list, true).SetFocus(list).Run(); err != nil {
+	e.flexx = tview.NewFlex()
+	e.flexx.SetDirection(tview.FlexColumn)
+	e.flexx.AddItem(list, 0, 1, true)
+	if err := e.app.SetRoot(e.flexx, true).Run(); err != nil {
 		panic(err)
 	}
 }
@@ -228,6 +213,7 @@ func (e *ExecutorScope) registerScreen(elementToFocus tview.Primitive) {
 	e.app.SetRoot(form, true).SetFocus(form).Draw()
 
 }
+
 func (e *ExecutorScope) loginScreen(elementToFocus tview.Primitive) {
 	form := tview.NewForm()
 	username := ""
@@ -246,6 +232,9 @@ func (e *ExecutorScope) loginScreen(elementToFocus tview.Primitive) {
 			return
 		}
 		e.modal(elementToFocus, "Logged in as "+username)
+		e.list.AddItem("send message", "send a message to a user", 'm', func() { e.messageScreen(e.flexx) })
+		go e.notificationScreen(e.flexx)
+
 	})
 
 	e.app.SetRoot(form, true).SetFocus(form).Draw()
@@ -277,5 +266,33 @@ func (e *ExecutorScope) modal(elementToFocus tview.Primitive, s string) {
 		e.app.SetRoot(elementToFocus, true).SetFocus(elementToFocus).Draw()
 	})
 	e.app.SetRoot(m, true).SetFocus(m).Draw()
+
+}
+
+func (e *ExecutorScope) notificationScreen(elementToFocus tview.Primitive) {
+	msgClient, err := e.chatClient.Messages(e.ctx, &api.Empty{})
+	if err != nil {
+		e.modal(e.app.GetFocus(), err.Error())
+		return
+	}
+	pages := tview.NewPages()
+	pages.SetBorder(true)
+	e.flexx.AddItem(pages, 0, 1, false)
+	userMessages := map[string]*tview.TextView{}
+	for {
+		message, err := msgClient.Recv()
+		if err != nil {
+			e.modal(e.app.GetFocus(), err.Error())
+			return
+		}
+
+		if !pages.HasPage(message.From) {
+			tv := tview.NewTextView()
+			userMessages[message.From] = tv
+			pages.AddPage(message.From, tv, true, true)
+		}
+		fmt.Fprintf(userMessages[message.From], "%v, %v", message.Data, message.From)
+		pages.SwitchToPage(message.From)
+	}
 
 }
