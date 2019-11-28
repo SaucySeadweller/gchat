@@ -85,9 +85,9 @@ func (d *DB) AddFriend(usernameA string, usernameB string) error {
 
 func (d *DB) RemoveFriend(usernameA string, usernameB string) error {
 	usrs := []string{usernameA, usernameB}
-	err := d.db.Exec(`DELETE FROM friends user_a in (?) and user_b in (?)`, usrs, usrs).Error
+	err := d.db.Debug().Exec(`DELETE FROM friends WHERE user_a in (?) and user_b in (?)`, usrs, usrs).Error
 	if gorm.IsRecordNotFoundError(err) {
-		err := d.db.Exec(`DELETE FROM friend_requests user_a in (?) and user_b in (?)`, usrs, usrs).Error
+		err := d.db.Exec(`DELETE FROM friend_requests WHERE user_a in (?) and user_b in (?)`, usrs, usrs).Error
 		if gorm.IsRecordNotFoundError(err) {
 			return status.Errorf(codes.NotFound, "you are not friends with user: %s", usernameB)
 

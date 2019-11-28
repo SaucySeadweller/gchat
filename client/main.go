@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 
-	prompt "github.com/c-bata/go-prompt"
 	"github.com/hibooboo2/gchat/api"
 	"github.com/hibooboo2/gchat/utils"
 	"github.com/rivo/tview"
@@ -39,60 +38,7 @@ type ExecutorScope struct {
 	app          *tview.Application
 	list         *tview.List
 	flexx        *tview.Flex
-}
-
-func (e *ExecutorScope) executor(t string) {
-	var err error
-	fmt.Println("You selected " + t)
-	switch t {
-	case "register":
-		err = reg(e.authClient)
-	case "send friend request":
-		e.sendFriendRequest()
-	case "friends list":
-		e.getFriends()
-	case "remove friend":
-		e.removeFriend()
-	case "status":
-		e.status()
-	}
-	if err != nil {
-		fmt.Println(err)
-	}
-
-}
-
-func reg(authClient api.AuthClient) error {
-	ctx := context.Background()
-	req := &api.RegisterRequest{}
-	req.Email = prompt.Input("What is your email?", Empty)
-	req.Username = prompt.Input("What is your desired username?", Empty)
-	req.Password = prompt.Input("What do you want to set your password as?", Empty)
-	req.FirstName = prompt.Input("(Optional)What is your first name ?", Empty)
-	req.LastName = prompt.Input("(Optional)What is your last name?", Empty)
-	regResp, err := authClient.Register(ctx, req)
-	if err != nil {
-		return err
-	}
-	log.Println(regResp)
-	return nil
-}
-
-func Empty(d prompt.Document) []prompt.Suggest { return nil }
-
-func Commands(d prompt.Document) []prompt.Suggest {
-	s := []prompt.Suggest{
-		{Text: "register", Description: "Register a user"},
-		{Text: "login", Description: "Login a user"},
-		{Text: "message", Description: "Send a message to a user"},
-		{Text: "notifications", Description: "Pull up notifications"},
-		{Text: "send friend request", Description: "Send a user a friend request"},
-		{Text: "friends list", Description: "Get a list of your friends"},
-		{Text: "remove friend", Description: "Removes a friend from your friends list"},
-		{Text: "status", Description: "checks the status of friends  from your friends list"},
-	}
-
-	return prompt.FilterHasPrefix(s, d.GetWordBeforeCursor(), true)
+	friendTree   *tview.TreeView
 }
 
 func (e *ExecutorScope) login(username string, pass string) error {
@@ -113,37 +59,72 @@ func (e *ExecutorScope) login(username string, pass string) error {
 	return nil
 }
 
-func (e *ExecutorScope) sendFriendRequest() {
-	_, err := e.friendClient.Add(e.ctx, &api.Friend{
-		Username: prompt.Input("Who do you want to send a friend request to?", Empty),
+func (e *ExecutorScope) sendFriendRequest(elementToFocus tview.Primitive) {
+	req := api.Friend{}
+
+	form := tview.NewForm()
+	form.AddInputField("username", "", 10, tview.InputFieldMaxLength(100), func(text string) {
+		req.Username = text
 	})
+	_, err := e.friendClient.Add(e.ctx, &req)
 	if err != nil {
-		fmt.Println(err)
+		e.modal(e.list, err.Error())
 	}
+	form.AddButton("send friend request", func() {
+		_, err := e.friendClient.Add(e.ctx, &req)
+		if err != nil {
+			e.modal(form, err.Error())
+			return
+		}
+		e.app.SetRoot(elementToFocus, true).SetFocus(elementToFocus).Draw()
+
+	})
+	e.app.SetRoot(form, true).SetFocus(form).Draw()
 }
 
-func (e *ExecutorScope) getFriends() {
+func (e *ExecutorScope) removeFriend(elementToFocus tview.Primitive) {
+	username := ""
+	req := api.Friend{}
+	form := tview.NewForm()
+	form.AddInputField("username", "", 10, tview.InputFieldMaxLength(100), func(text string) {
+		req.Username = text
+	})
+	_, err := e.friendClient.Remove(e.ctx, &req)
+	if err != nil {
+		e.modal(form, err.Error())
+
+	}
+
+	form.AddButton("remove friend", func() {
+		_, err := e.friendClient.Remove(e.ctx, &req)
+		if err != nil {
+			e.modal(form, err.Error())
+			return
+		}
+
+		e.app.SetRoot(elementToFocus, true).SetFocus(elementToFocus).Draw()
+
+	})
+
+	delete(e.friendList, username)
+	e.app.SetRoot(form, true).SetFocus(form).Draw()
+}
+
+func (e *ExecutorScope) getFriends(elementToFocus tview.Primitive) {
 	e.friendList = map[string]*api.Friend{}
 	friends, err := e.friendClient.All(e.ctx, &api.FriendsListReq{})
 	if err != nil {
-		fmt.Println(err)
+		e.modal(e.app.GetFocus(), err.Error())
 	}
+	e.friendTree = tview.NewTreeView()
+	friendRoot := tview.NewTreeNode("friends")
+	e.friendTree.SetRoot(friendRoot)
 	for _, friend := range friends.Friends {
 		e.friendList[friend.Username] = friend
+		friendRoot.AddChild(tview.NewTreeNode(friend.Username))
 	}
-
-}
-
-func (e *ExecutorScope) removeFriend() {
-	username := prompt.Input("Which friend do you want to delete?", Empty)
-	_, err := e.friendClient.Remove(e.ctx, &api.Friend{
-		Username: username,
-	})
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	delete(e.friendList, username)
+	e.flexx.AddItem(e.friendTree, 0, 1, false)
+	e.friendTree.SetBorder(true)
 
 }
 
@@ -174,12 +155,16 @@ func (e *ExecutorScope) ui() {
 	list.AddItem("register", "register to use the program", 'r', func() { e.registerScreen(e.flexx) })
 	list.AddItem("login", "login as a user", 'l', func() { e.loginScreen(e.flexx) })
 	list.AddItem("quit", "quit the program", 'q', func() { e.app.Stop() })
+
 	e.flexx = tview.NewFlex()
 	e.flexx.SetDirection(tview.FlexColumn)
 	e.flexx.AddItem(list, 0, 1, true)
+	e.flexx.SetTitle("Gchat")
+	e.flexx.SetBorder(true)
 	if err := e.app.SetRoot(e.flexx, true).Run(); err != nil {
 		panic(err)
 	}
+
 }
 
 func (e *ExecutorScope) registerScreen(elementToFocus tview.Primitive) {
@@ -231,8 +216,15 @@ func (e *ExecutorScope) loginScreen(elementToFocus tview.Primitive) {
 			e.modal(form, err.Error())
 			return
 		}
-		e.modal(elementToFocus, "Logged in as "+username)
+		e.list.RemoveItem(e.list.GetCurrentItem() - 1)
+		e.list.RemoveItem(e.list.GetCurrentItem())
+		e.list.RemoveItem(e.list.GetCurrentItem())
+		e.app.SetFocus(elementToFocus).SetRoot(elementToFocus, true).Draw()
 		e.list.AddItem("send message", "send a message to a user", 'm', func() { e.messageScreen(e.flexx) })
+		e.list.AddItem("add friend", "add a friend", 'f', func() { e.sendFriendRequest(e.flexx) })
+		e.list.AddItem("remove friend", "remove a friend", 'r', func() { e.removeFriend(e.flexx) })
+		e.list.AddItem("quit", "quit the program", 'q', func() { e.app.Stop() })
+		e.getFriends(elementToFocus)
 		go e.notificationScreen(e.flexx)
 
 	})
@@ -259,6 +251,7 @@ func (e *ExecutorScope) messageScreen(elementToFocus tview.Primitive) {
 	})
 	e.app.SetRoot(form, true).SetFocus(form).Draw()
 }
+
 func (e *ExecutorScope) modal(elementToFocus tview.Primitive, s string) {
 	m := tview.NewModal()
 	m.AddButtons([]string{"Ok"}).SetText(s)
